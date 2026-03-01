@@ -219,6 +219,25 @@ run_docker build -t secure-openclaw . > /dev/null
 print_success "Container image built."
 rm Dockerfile entrypoint.sh
 
+# Optional: Network egress restriction
+echo ""
+echo -e "${YELLOW}Network Egress Restriction (Optional)${NC}"
+echo "This creates an isolated Docker network that only allows HTTPS (443)"
+echo "and DNS (53) outbound traffic. LLM API calls work normally."
+read -p "Restrict network egress to HTTPS only? (recommended) [y/N] " RESTRICT_NET
+
+if [ "$RESTRICT_NET" = "y" ] || [ "$RESTRICT_NET" = "Y" ]; then
+    run_docker network create --driver bridge --subnet 172.30.0.0/16 safeclaw_net 2>/dev/null || true
+    # Insert in reverse priority order (-I inserts at top each time)
+    sudo iptables -I DOCKER-USER -s 172.30.0.0/16 -j DROP
+    sudo iptables -I DOCKER-USER -s 172.30.0.0/16 -p tcp --dport 53 -j ACCEPT
+    sudo iptables -I DOCKER-USER -s 172.30.0.0/16 -p udp --dport 53 -j ACCEPT
+    sudo iptables -I DOCKER-USER -s 172.30.0.0/16 -p tcp --dport 443 -j ACCEPT
+    SAFECLAW_NETWORK="safeclaw_net"
+    print_success "Network egress restricted to HTTPS and DNS only."
+    print_warning "These rules are not persistent across reboots. Install iptables-persistent to keep them."
+fi
+
 # --- Step 6: Create Launcher ---
 print_step "6/9" "Installing Launcher Script"
 
@@ -266,6 +285,11 @@ trap - EXIT
 
 echo "OpenClaw started."
 EOF
+
+# Inject network flag if egress restriction was enabled
+if [ -n "$SAFECLAW_NETWORK" ]; then
+    sed -i '/--security-opt=no-new-privileges/a\  --network safeclaw_net \\' safeclaw
+fi
 
 chmod +x safeclaw
 sudo mv safeclaw /usr/local/bin/safeclaw
