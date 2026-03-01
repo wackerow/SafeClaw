@@ -118,7 +118,7 @@ sudo chown -R $USER:$(id -g) data
 
 # Tar and Encrypt
 tar -czf config.tar.gz -C data .
-openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in config.tar.gz -out secrets.enc
+openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -in config.tar.gz -out secrets.enc
 
 if [ -f "secrets.enc" ]; then
     chmod 600 secrets.enc
@@ -141,7 +141,7 @@ if [ -z "$SECRET_KEY" ]; then echo "Error: SECRET_KEY not provided"; exit 1; fi
 
 # Decrypt credentials directly into the config directory
 echo "Decrypting configuration..."
-openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 100000 -in /app/data/secrets.enc -k "$SECRET_KEY" | tar -xz -C /root/.openclaw
+openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -in /app/data/secrets.enc -k "$SECRET_KEY" | tar -xz -C /root/.openclaw
 
 if [ $? -ne 0 ]; then
     echo "Decryption failed! Check your password."
