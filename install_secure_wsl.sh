@@ -131,11 +131,17 @@ print_step "5/9" "Building Sandboxed Container"
 # Create entrypoint
 cat <<'EOF' > entrypoint.sh
 #!/bin/bash
-if [ -z "$SECRET_KEY" ]; then echo "Error: SECRET_KEY not provided"; exit 1; fi
+# Read secret from mounted file (not environment variable)
+if [ ! -f /run/secrets/secret_key ]; then
+    echo "Error: Secret key file not mounted at /run/secrets/secret_key"
+    exit 1
+fi
+SECRET_KEY=$(cat /run/secrets/secret_key)
 
 # Decrypt credentials directly into the config directory
 echo "Decrypting configuration..."
 openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -in /app/data/secrets.enc -k "$SECRET_KEY" | tar -xz -C /root/.openclaw
+unset SECRET_KEY
 
 if [ $? -ne 0 ]; then
     echo "Decryption failed! Check your password."
@@ -187,6 +193,13 @@ echo -n "Enter your secure configuration password: "
 read -s SECRET_KEY
 echo
 
+# Write secret to temp file (never passed as env var)
+SECRET_FILE=$(mktemp)
+trap 'rm -f "$SECRET_FILE"' EXIT
+chmod 644 "$SECRET_FILE"  # readable by non-root container user; file deleted in seconds
+echo -n "$SECRET_KEY" > "$SECRET_FILE"
+unset SECRET_KEY
+
 # Clean up previous instance if it exists
 docker rm -f openclaw 2>/dev/null || true
 
@@ -195,9 +208,14 @@ echo "Launching OpenClaw..."
 docker run -d \
   --name openclaw \
   --restart unless-stopped \
-  -v ~/openclaw-secure/data:/app/data \
-  -e SECRET_KEY="$SECRET_KEY" \
+  -v "$HOME/openclaw-secure/data:/app/data" \
+  --mount type=bind,source="$SECRET_FILE",target=/run/secrets/secret_key,readonly \
   secure-openclaw
+
+# Wait for container to read the secret, then clean up
+sleep 2
+rm -f "$SECRET_FILE"
+trap - EXIT
 
 echo "OpenClaw started."
 EOF
