@@ -152,11 +152,6 @@ fi
 # Security Hardening: Disable mDNS (Bonjour)
 export OPENCLAW_DISABLE_BONJOUR=1
 
-# Install security skills if missing
-echo "Installing security skills..."
-mkdir -p /app/skills
-npx -y clawhub install prompt-guard || echo "Warning: PromptGuard install failed"
-
 # Start OpenClaw
 echo "Starting OpenClaw in Sandbox..."
 exec openclaw gateway
@@ -170,6 +165,9 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y python3 build-essential git && rm -rf /var/lib/apt/lists/*
 RUN npm install -g openclaw@2026.2.19
 
+# Prepare skills directory
+RUN mkdir -p /build/skills
+
 # Runtime stage: slim image without build tools
 FROM node:22-slim
 WORKDIR /app
@@ -178,6 +176,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl
 # Copy installed packages from builder (no compilers in runtime)
 COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /build/skills /app/skills
 
 # Create non-root user
 RUN groupadd -r openclaw && useradd -r -g openclaw -d /home/openclaw -m -s /bin/bash openclaw
