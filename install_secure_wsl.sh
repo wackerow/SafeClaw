@@ -115,7 +115,8 @@ tar -czf config.tar.gz -C data .
 openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -in config.tar.gz -out secrets.enc
 
 if [ -f "secrets.enc" ]; then
-    chmod 600 secrets.enc
+    # 644: readable by non-root container user (encryption is the real protection)
+    chmod 644 secrets.enc
     rm -rf data/* config.tar.gz
     mv secrets.enc data/secrets.enc
     print_success "Configuration encrypted."
@@ -140,7 +141,7 @@ SECRET_KEY=$(cat /run/secrets/secret_key)
 
 # Decrypt credentials directly into the config directory
 echo "Decrypting configuration..."
-openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -in /app/data/secrets.enc -k "$SECRET_KEY" | tar -xz -C /root/.openclaw
+openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -in /app/data/secrets.enc -k "$SECRET_KEY" | tar -xz -C /home/openclaw/.openclaw
 unset SECRET_KEY
 
 if [ $? -ne 0 ]; then
@@ -163,17 +164,29 @@ EOF
 
 # Create Dockerfile
 cat <<EOF > Dockerfile
-FROM node:22-slim
-WORKDIR /app
-# Install dependencies
-RUN apt-get update && apt-get install -y openssl jq curl python3 build-essential git && rm -rf /var/lib/apt/lists/*
+# Builder stage: compile native modules with build tools
+FROM node:22-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y python3 build-essential git && rm -rf /var/lib/apt/lists/*
 RUN npm install -g openclaw@2026.2.19
 
-# Prepare directories
-RUN mkdir -p /root/.openclaw
+# Runtime stage: slim image without build tools
+FROM node:22-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl git ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder (no compilers in runtime)
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Create non-root user
+RUN groupadd -r openclaw && useradd -r -g openclaw -d /home/openclaw -m -s /bin/bash openclaw
+RUN mkdir -p /home/openclaw/.openclaw /app/data && chown -R openclaw:openclaw /home/openclaw /app
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+USER openclaw
 ENTRYPOINT ["/app/entrypoint.sh"]
 EOF
 
@@ -208,6 +221,8 @@ echo "Launching OpenClaw..."
 docker run -d \
   --name openclaw \
   --restart unless-stopped \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges \
   -v "$HOME/openclaw-secure/data:/app/data" \
   --mount type=bind,source="$SECRET_FILE",target=/run/secrets/secret_key,readonly \
   secure-openclaw
