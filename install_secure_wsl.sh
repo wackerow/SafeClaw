@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors for better UX
 RED='\033[0;31m'
@@ -171,6 +172,11 @@ RUN mkdir -p /build/skills
 # Vendor ACIP prompt injection defense at build time (not fetched by bot at runtime)
 RUN git clone --depth 1 https://github.com/Dicklesworthstone/acip.git /build/skills/acip
 
+# Install vendored NIP-17 Nostr plugin at build time
+RUN mkdir -p /build/plugins
+COPY nostr-nip17 /build/plugins/nostr-nip17
+RUN cd /build/plugins/nostr-nip17 && npm install
+
 # Runtime stage: slim image without build tools
 FROM node:22-slim
 WORKDIR /app
@@ -180,6 +186,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl jq curl
 COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /build/skills /app/skills
+COPY --from=builder /build/plugins /app/plugins
 
 # Create non-root user
 RUN groupadd -r openclaw && useradd -r -g openclaw -d /home/openclaw -m -s /bin/bash openclaw
@@ -193,10 +200,13 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 EOF
 
 echo "Building secure-openclaw image..."
+if [ -d "$SCRIPT_DIR/vendor/nostr-nip17" ]; then
+    cp -r "$SCRIPT_DIR/vendor/nostr-nip17" ./nostr-nip17
+fi
 docker build -t secure-openclaw . > /dev/null
 
 print_success "Container image built."
-rm Dockerfile entrypoint.sh
+rm -rf Dockerfile entrypoint.sh nostr-nip17
 
 # Optional: Network egress restriction
 echo ""
